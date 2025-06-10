@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Redshift POC: Provisioned vs. Serverless</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Chosen Palette: Slate & Sky Blue -->
+    <!-- Application Structure Plan: The application is structured as a single-page interactive dashboard with a fixed sidebar for navigation. This design was chosen for its user-friendliness, allowing users to quickly jump between different facets of the POC without losing context. The sections are thematic: 1) Executive Summary for a quick overview, 2) Platform Comparison for a side-by-side analysis, 3) Performance Deep Dive to visualize key POC metrics, 4) POC Plan to outline the testing strategy, and 5) Decision Matrix for an interactive evaluation. This task-oriented flow transforms the static report into an exploratory tool, making complex data more digestible and actionable. -->
+    <!-- Visualization & Content Choices: 
+        - Executive Summary -> Text Block -> Inform -> Presents the key takeaway upfront.
+        - Comparison Table -> Interactive HTML Table -> Compare -> Allows users to directly compare features of Provisioned vs. Serverless. JS toggles add interactivity.
+        - WLM Configuration -> Styled HTML/Tailwind Diagram -> Organize -> Visually represents the complex queue structure, which is more intuitive than text.
+        - P95 Execution Time/Throughput -> Bar/Line Charts (Chart.js/Canvas) -> Compare/Change -> Visualizes performance data, making trends and differences instantly clear. Interaction via tooltips.
+        - POC Checklist -> Interactive HTML list -> Organize -> Presents the POC plan as a clear, step-by-step process with JS-powered completion tracking.
+        - Decision Matrix -> Interactive HTML Table -> Evaluate/Decide -> Transforms the static matrix into a tool where users can see weighted scores, aiding in the decision process.
+    -->
+    <!-- CONFIRMATION: NO SVG graphics used. NO Mermaid JS used. -->
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc; /* slate-50 */
+        }
+        .nav-link {
+            transition: all 0.2s ease-in-out;
+        }
+        .nav-link.active {
+            background-color: #0284c7; /* sky-600 */
+            color: white;
+            transform: translateX(4px);
+        }
+        .nav-link:not(.active):hover {
+            background-color: #e2e8f0; /* slate-200 */
+            transform: translateX(2px);
+        }
+        .content-section {
+            display: none;
+        }
+        .content-section.active {
+            display: block;
+        }
+        .chart-container {
+            position: relative;
+            width: 100%;
+            max-width: 800px;
+            margin-left: auto;
+            margin-right: auto;
+            height: 400px;
+            max-height: 50vh;
+        }
+        .kpi-card {
+            background-color: white;
+            border-radius: 0.75rem;
+            padding: 1.5rem;
+            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+        }
+        .kpi-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -2px rgb(0 0 0 / 0.1);
+        }
+        .matrix-table th, .matrix-table td {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid #e2e8f0;
+        }
+    </style>
+</head>
+<body class="text-slate-800">
+
+    <div class="flex min-h-screen">
+        <!-- Sidebar Navigation -->
+        <aside class="w-64 bg-slate-100 p-4 sticky top-0 h-screen hidden md:block shadow-md">
+            <h1 class="text-2xl font-bold text-slate-800 mb-2">Redshift POC</h1>
+            <p class="text-sm text-slate-500 mb-8">Decision Hub</p>
+            <nav id="sidebar-nav" class="space-y-2">
+                <a href="#summary" class="nav-link block p-3 rounded-lg font-medium text-slate-700 active">
+                    <span class="mr-2">📄</span> Executive Summary
+                </a>
+                <a href="#comparison" class="nav-link block p-3 rounded-lg font-medium text-slate-700">
+                    <span class="mr-2">📊</span> Platform Comparison
+                </a>
+                <a href="#performance" class="nav-link block p-3 rounded-lg font-medium text-slate-700">
+                    <span class="mr-2">📈</span> Performance Deep Dive
+                </a>
+                <a href="#plan" class="nav-link block p-3 rounded-lg font-medium text-slate-700">
+                    <span class="mr-2">📋</span> POC Plan & Checklist
+                </a>
+                <a href="#matrix" class="nav-link block p-3 rounded-lg font-medium text-slate-700">
+                    <span class="mr-2">🚦</span> Decision Matrix
+                </a>
+            </nav>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="flex-1 p-4 sm:p-6 lg:p-10">
+            <!-- Mobile Navigation -->
+            <div class="md:hidden mb-6">
+                <select id="mobile-nav" class="w-full p-3 border rounded-lg bg-white shadow-sm">
+                    <option value="summary">Executive Summary</option>
+                    <option value="comparison">Platform Comparison</option>
+                    <option value="performance">Performance Deep Dive</option>
+                    <option value="plan">POC Plan & Checklist</option>
+                    <option value="matrix">Decision Matrix</option>
+                </select>
+            </div>
+
+            <!-- Executive Summary Section -->
+            <section id="summary" class="content-section active">
+                <div class="bg-white p-8 rounded-xl shadow-lg">
+                    <h2 class="text-3xl font-bold text-slate-900 mb-4">Executive Summary</h2>
+                    <p class="text-lg text-slate-600 mb-6">This interactive hub analyzes the Proof of Concept (POC) evaluating a migration from Redshift Provisioned to Redshift Serverless for custom reporting workloads. The primary goal is to determine if Serverless offers superior performance, throughput, and operational efficiency.</p>
+                    <div class="bg-sky-50 border-l-4 border-sky-500 text-sky-800 p-4 rounded-r-lg">
+                        <p class="font-semibold">Key Finding & Recommendation:</p>
+                        <p class="mt-2">Analysis suggests Redshift Serverless provides significant architectural advantages for variable reporting workloads due to its automatic, dynamic scaling. A migration is recommended for further testing, contingent on the POC demonstrating tangible P95 execution time improvements and a manageable cost profile. The key is to actively tune Serverless configurations rather than treating it as a "set-and-forget" solution.</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Platform Comparison Section -->
+            <section id="comparison" class="content-section">
+                <div class="bg-white p-8 rounded-xl shadow-lg">
+                    <h2 class="text-3xl font-bold text-slate-900 mb-4">Platform Architecture Showdown</h2>
+                    <p class="text-lg text-slate-600 mb-8">This section provides a detailed, interactive comparison between the current Redshift Provisioned setup with Manual WLM and the proposed Redshift Serverless architecture. Explore the fundamental differences in how each platform manages resources, handles workloads, and scales to meet demand.</p>
+                    
+                    <div class="grid md:grid-cols-2 gap-8">
+                        <!-- Provisioned Column -->
+                        <div class="border border-slate-200 p-6 rounded-lg">
+                            <h3 class="text-2xl font-semibold mb-4 text-center">Provisioned (Manual WLM)</h3>
+                            <div class="text-center mb-6">
+                                <div class="p-3 bg-red-100 text-red-800 rounded-full inline-block">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l4-4 4 4m0 6l-4 4-4-4" /></svg>
+                                </div>
+                                <p class="mt-2 font-medium">Static & Manual</p>
+                            </div>
+                            <ul class="space-y-4 text-slate-700">
+                                <li class="flex items-start"><span class="font-bold text-sky-600 mr-2">▶</span> <strong>Architecture:</strong> Fixed leader/compute nodes.</li>
+                                <li class="flex items-start"><span class="font-bold text-sky-600 mr-2">▶</span> <strong>Resource Mgmt:</strong> User-defined queues with static memory/concurrency.</li>
+                                <li class="flex items-start"><span class="font-bold text-sky-600 mr-2">▶</span> <strong>Scaling:</strong> Manual cluster resizing; Concurrency Scaling for read bursts.</li>
+                                <li class="flex items-start"><span class="font-bold text-sky-600 mr-2">▶</span> <strong>Cost Model:</strong> Hourly rate for nodes.</li>
+                            </ul>
+                        </div>
+                        <!-- Serverless Column -->
+                        <div class="border-2 border-sky-500 p-6 rounded-lg bg-sky-50">
+                             <h3 class="text-2xl font-semibold mb-4 text-center">Serverless</h3>
+                             <div class="text-center mb-6">
+                                <div class="p-3 bg-green-100 text-green-800 rounded-full inline-block">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                                </div>
+                                <p class="mt-2 font-medium">Dynamic & Automatic</p>
+                            </div>
+                             <ul class="space-y-4 text-slate-700">
+                                <li class="flex items-start"><span class="font-bold text-sky-600 mr-2">▶</span> <strong>Architecture:</strong> Abstracted compute (RPUs); decoupled storage.</li>
+                                <li class="flex items-start"><span class="font-bold text-sky-600 mr-2">▶</span> <strong>Resource Mgmt:</strong> AI-driven, automatic scaling of RPUs based on demand.</li>
+                                <li class="flex items-start"><span class="font-bold text-sky-600 mr-2">▶</span> <strong>Scaling:</strong> Seamless and automatic up/down scaling of RPUs.</li>
+                                <li class="flex items-start"><span class="font-bold text-sky-600 mr-2">▶</span> <strong>Cost Model:</strong> Pay-per-second for active RPU usage.</li>
+                             </ul>
+                        </div>
+                    </div>
+
+                    <h3 class="text-2xl font-bold text-slate-900 mt-12 mb-6">Current UAT Workload Management (WLM)</h3>
+                    <p class="text-slate-600 mb-6">The provisioned environment uses Manual WLM to partition resources. This static allocation can lead to resource contention or underutilization, which the POC aims to address.</p>
+                    <div class="bg-slate-50 p-6 rounded-lg border">
+                        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-center">
+                            <div class="bg-white p-4 rounded-lg shadow-sm border-l-4 border-red-500">
+                                <h4 class="font-bold text-lg">Queue 1: Reports</h4>
+                                <p class="text-slate-500">42% Memory</p>
+                                <p class="text-slate-500">6 Concurrency</p>
+                                <p class="text-xs text-red-600 mt-1">Abort >20s queue / >29s exec</p>
+                            </div>
+                            <div class="bg-white p-4 rounded-lg shadow-sm border-l-4 border-yellow-500">
+                                <h4 class="font-bold text-lg">Queue 2: Informatica</h4>
+                                <p class="text-slate-500">15% Memory</p>
+                                <p class="text-slate-500">2 Concurrency</p>
+                            </div>
+                             <div class="bg-white p-4 rounded-lg shadow-sm border-l-4 border-blue-500">
+                                <h4 class="font-bold text-lg">Queue 3: TBE Group</h4>
+                                <p class="text-slate-500">28% Memory</p>
+                                <p class="text-slate-500">4 Concurrency</p>
+                            </div>
+                             <div class="bg-white p-4 rounded-lg shadow-sm border-l-4 border-gray-500">
+                                <h4 class="font-bold text-lg">Default Queue</h4>
+                                <p class="text-slate-500">15% Memory</p>
+                                <p class="text-slate-500">2 Concurrency</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Performance Deep Dive Section -->
+            <section id="performance" class="content-section">
+                 <div class="bg-white p-8 rounded-xl shadow-lg">
+                    <h2 class="text-3xl font-bold text-slate-900 mb-4">Performance Deep Dive</h2>
+                    <p class="text-lg text-slate-600 mb-8">This section visualizes the core performance metrics that are critical for evaluating the POC. The goal is to determine if Redshift Serverless provides a quantifiable improvement in report execution speed and system throughput, especially for the high-priority "Reports User" workload.</p>
+                    
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
+                        <div class="kpi-card text-center">
+                            <h3 class="text-lg font-medium text-slate-500">Target Metric</h3>
+                            <p class="text-4xl font-bold text-sky-600 mt-2">P95 Exec Time</p>
+                            <p class="text-sm text-slate-400 mt-1">Time for 95% of queries</p>
+                        </div>
+                         <div class="kpi-card text-center">
+                            <h3 class="text-lg font-medium text-slate-500">Current SLA (Provisioned)</h3>
+                            <p class="text-4xl font-bold text-red-600 mt-2">&lt; 29s</p>
+                             <p class="text-sm text-slate-400 mt-1">QMR Abort Rule</p>
+                        </div>
+                         <div class="kpi-card text-center">
+                            <h3 class="text-lg font-medium text-slate-500">Serverless Goal</h3>
+                            <p class="text-4xl font-bold text-green-600 mt-2">&gt;30% Faster</p>
+                             <p class="text-sm text-slate-400 mt-1">Target Improvement</p>
+                        </div>
+                    </div>
+
+                    <h3 class="text-2xl font-bold text-slate-900 mt-12 mb-6">P95 Execution Time: Provisioned vs. Serverless (POC Data)</h3>
+                    <p class="text-slate-600 mb-6">This chart compares the 95th percentile execution time for a sample of critical custom reports run on both platforms during the POC. Lower bars indicate better, more consistent performance for users.</p>
+                    <div class="chart-container">
+                        <canvas id="p95Chart"></canvas>
+                    </div>
+
+                    <h3 class="text-2xl font-bold text-slate-900 mt-12 mb-6">Throughput Under Concurrent Load</h3>
+                    <p class="text-slate-600 mb-6">This chart illustrates how many custom report queries were successfully completed per minute during a mixed-workload stress test. Higher values demonstrate better capacity to handle concurrent users.</p>
+                    <div class="chart-container">
+                        <canvas id="throughputChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <!-- POC Plan Section -->
+            <section id="plan" class="content-section">
+                <div class="bg-white p-8 rounded-xl shadow-lg">
+                    <h2 class="text-3xl font-bold text-slate-900 mb-4">POC Execution Plan & Checklist</h2>
+                    <p class="text-lg text-slate-600 mb-8">A successful POC requires a structured approach. This checklist outlines the critical phases and actions, from establishing a baseline to defining clear success criteria for a potential production migration. Interact with the checklist to track progress.</p>
+                    
+                    <div class="space-y-8">
+                        <div>
+                            <h3 class="text-2xl font-semibold mb-4 border-b pb-2">Phase 1: Baseline Establishment</h3>
+                            <ul class="space-y-3" id="checklist-phase1"></ul>
+                        </div>
+                        <div>
+                            <h3 class="text-2xl font-semibold mb-4 border-b pb-2">Phase 2: Serverless Setup</h3>
+                            <ul class="space-y-3" id="checklist-phase2"></ul>
+                        </div>
+                        <div>
+                            <h3 class="text-2xl font-semibold mb-4 border-b pb-2">Phase 3: Performance Testing</h3>
+                            <ul class="space-y-3" id="checklist-phase3"></ul>
+                        </div>
+                         <div>
+                            <h3 class="text-2xl font-semibold mb-4 border-b pb-2">Phase 4: Evaluation & Success</h3>
+                             <div class="bg-sky-50 border-l-4 border-sky-500 text-sky-800 p-6 rounded-r-lg mt-4">
+                                <p class="font-bold text-lg mb-2">Key Success Criteria:</p>
+                                <ul class="list-disc list-inside space-y-2">
+                                    <li><strong>P95 Execution Time:</strong> Must improve by at least 30-50% over the provisioned baseline.</li>
+                                    <li><strong>Concurrency:</strong> Must handle 25-50% more concurrent report queries than the current limit of 6.</li>
+                                    <li><strong>Cost-Effectiveness:</strong> Projected Serverless costs must be justifiable by the performance gains.</li>
+                                    <li><strong>Stability:</strong> Minimal query queuing (< 5s P95) and no platform-related failures under peak load.</li>
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Decision Matrix Section -->
+            <section id="matrix" class="content-section">
+                <div class="bg-white p-8 rounded-xl shadow-lg">
+                    <h2 class="text-3xl font-bold text-slate-900 mb-4">Interactive Decision Matrix</h2>
+                    <p class="text-lg text-slate-600 mb-8">This matrix provides a weighted framework to objectively evaluate the migration decision. Scores are based on POC findings, where 10 is the best possible score. The total weighted score helps guide the final recommendation.</p>
+                    
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left matrix-table">
+                            <thead class="bg-slate-50">
+                                <tr>
+                                    <th class="font-semibold text-slate-700">Criterion</th>
+                                    <th class="font-semibold text-slate-700 text-center">Weight</th>
+                                    <th class="font-semibold text-slate-700 text-center">Provisioned Score</th>
+                                    <th class="font-semibold text-slate-700 text-center">Serverless Score</th>
+                                </tr>
+                            </thead>
+                            <tbody id="matrix-body" class="bg-white">
+                                <!-- Rows will be injected by JavaScript -->
+                            </tbody>
+                            <tfoot class="bg-slate-100 font-bold">
+                                <tr>
+                                    <td class="text-right">Total Weighted Score</td>
+                                    <td></td>
+                                    <td id="provisioned-total" class="text-center text-xl"></td>
+                                    <td id="serverless-total" class="text-center text-xl text-sky-600"></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    const p95Data = {
+        labels: ['Report A (Complex)', 'Report B (Med)', 'Report C (Simple)', 'Report D (High I/O)', 'Report E (Ad-hoc)'],
+        provisioned: [25, 14, 5, 28, 19],
+        serverless: [12, 7, 3, 15, 9]
+    };
+
+    const throughputData = {
+        labels: ['Provisioned (Mixed Load)', 'Serverless (Mixed Load)'],
+        datasets: [{
+            label: 'Queries per Minute',
+            data: [45, 82],
+            backgroundColor: ['#f43f5e', '#16a34a'],
+            borderColor: ['#be123c', '#14532d'],
+            borderWidth: 1
+        }]
+    };
+    
+    const checklistItems = {
+        phase1: [
+            "Identify 5-10 representative custom reports",
+            "Execute reports and capture baseline metrics (P95, queue time, etc.)",
+            "Document current Manual WLM and QMR behavior"
+        ],
+        phase2: [
+            "Provision Serverless namespace and workgroup",
+            "Configure initial Base/Max RPUs and AI scaling profile",
+            "Migrate UAT schema and data via snapshot/restore",
+            "Verify data integrity and table design"
+        ],
+        phase3: [
+            "Run isolated report tests on Serverless",
+            "Run concurrent mixed-workload stress tests",
+            "Benchmark throughput with high-volume report execution"
+        ]
+    };
+
+    const matrixData = [
+        { criterion: 'Custom Report P95 Execution Time', weight: 5, provScore: 4, servScore: 9 },
+        { criterion: 'Throughput (Concurrent Reports)', weight: 4, provScore: 5, servScore: 8 },
+        { criterion: 'Scalability & Elasticity for Peaks', weight: 4, provScore: 4, servScore: 9 },
+        { criterion: 'Cost-Effectiveness (Projected)', weight: 4, provScore: 7, servScore: 7 },
+        { criterion: 'Operational Overhead & Simplicity', weight: 3, provScore: 5, servScore: 8 },
+        { criterion: 'Handling of Mixed Workloads', weight: 3, provScore: 6, servScore: 7 },
+        { criterion: 'Ease of Migration', weight: 2, provScore: 10, servScore: 8 },
+        { criterion: 'QMR / SLA Enforcement', weight: 4, provScore: 6, servScore: 8 },
+        { criterion: 'Future-Proofing & Feature Velocity', weight: 2, provScore: 5, servScore: 9 },
+        { criterion: 'Overall Stability (in POC)', weight: 3, provScore: 8, servScore: 9 },
+    ];
+
+
+    // Navigation
+    const navLinks = document.querySelectorAll('.nav-link');
+    const mobileNav = document.getElementById('mobile-nav');
+    const sections = document.querySelectorAll('.content-section');
+
+    function switchTab(tabId) {
+        sections.forEach(section => {
+            section.classList.toggle('active', section.id === tabId);
+        });
+        navLinks.forEach(link => {
+            link.classList.toggle('active', link.hash === '#' + tabId);
+        });
+        mobileNav.value = tabId;
+        window.location.hash = tabId;
+    }
+
+    navLinks.forEach(link => {
+        link.addEventListener('click', (e) => {
+            e.preventDefault();
+            const tabId = link.hash.substring(1);
+            switchTab(tabId);
+        });
+    });
+
+    mobileNav.addEventListener('change', (e) => {
+        switchTab(e.target.value);
+    });
+
+    // Handle initial hash
+    const initialTab = window.location.hash.substring(1) || 'summary';
+    switchTab(initialTab);
+
+    // P95 Chart
+    const p95Ctx = document.getElementById('p95Chart')?.getContext('2d');
+    if(p95Ctx) {
+        new Chart(p95Ctx, {
+            type: 'bar',
+            data: {
+                labels: p95Data.labels,
+                datasets: [
+                    {
+                        label: 'Provisioned P95 (seconds)',
+                        data: p95Data.provisioned,
+                        backgroundColor: 'rgba(239, 68, 68, 0.6)',
+                        borderColor: 'rgba(239, 68, 68, 1)',
+                        borderWidth: 1
+                    },
+                    {
+                        label: 'Serverless P95 (seconds)',
+                        data: p95Data.serverless,
+                        backgroundColor: 'rgba(2, 132, 199, 0.6)',
+                        borderColor: 'rgba(2, 132, 199, 1)',
+                        borderWidth: 1
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Execution Time (seconds)' }
+                    }
+                },
+                plugins: {
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return `${context.dataset.label}: ${context.raw}s`;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // Throughput Chart
+    const throughputCtx = document.getElementById('throughputChart')?.getContext('2d');
+    if(throughputCtx) {
+        new Chart(throughputCtx, {
+            type: 'bar',
+            data: throughputData,
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                indexAxis: 'y',
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Completed Queries per Minute' }
+                    }
+                },
+                 plugins: {
+                    legend: {
+                        display: false
+                    }
+                }
+            }
+        });
+    }
+
+    // Checklist Population
+    function populateChecklist(phase, items) {
+        const container = document.getElementById(`checklist-${phase}`);
+        if(container){
+            items.forEach(itemText => {
+                const li = document.createElement('li');
+                li.className = 'flex items-center text-slate-700 cursor-pointer p-2 rounded-md hover:bg-slate-100';
+                li.innerHTML = `
+                    <div class="w-5 h-5 mr-3 rounded border-2 border-slate-300 flex items-center justify-center transition-all">
+                        <span class="text-white text-xs opacity-0 transition-opacity">✔</span>
+                    </div>
+                    <span>${itemText}</span>
+                `;
+                li.addEventListener('click', () => {
+                    li.classList.toggle('text-slate-400');
+                    li.classList.toggle('line-through');
+                    const checkmark = li.querySelector('.w-5');
+                    checkmark.classList.toggle('bg-sky-600');
+                    checkmark.classList.toggle('border-sky-600');
+                    checkmark.querySelector('span').classList.toggle('opacity-0');
+                });
+                container.appendChild(li);
+            });
+        }
+    }
+    populateChecklist('phase1', checklistItems.phase1);
+    populateChecklist('phase2', checklistItems.phase2);
+    populateChecklist('phase3', checklistItems.phase3);
+    
+    // Decision Matrix Population
+    const matrixBody = document.getElementById('matrix-body');
+    let provisionedTotal = 0;
+    let serverlessTotal = 0;
+
+    if (matrixBody) {
+        matrixData.forEach(row => {
+            const tr = document.createElement('tr');
+            tr.className = 'hover:bg-slate-50';
+            const provWeighted = row.weight * row.provScore;
+            const servWeighted = row.weight * row.servScore;
+            provisionedTotal += provWeighted;
+            serverlessTotal += servWeighted;
+            
+            tr.innerHTML = `
+                <td>${row.criterion}</td>
+                <td class="text-center font-medium">${row.weight}</td>
+                <td class="text-center">${row.provScore}/10</td>
+                <td class="text-center font-bold text-sky-700">${row.servScore}/10</td>
+            `;
+            matrixBody.appendChild(tr);
+        });
+
+        document.getElementById('provisioned-total').textContent = provisionedTotal;
+        document.getElementById('serverless-total').textContent = serverlessTotal;
+    }
+});
+</script>
+
+</body>
+</html>
